@@ -4,7 +4,6 @@ use Module::Build;
 
 my $builder = Module::Build->new(
     module_name         => 'Params::Clean',
-    dist_version        => '0.9',
     dist_abstract       => 'Clean and simple parsing of args by position/name/flag/list/type',
     dist_author         => 'David Green <plato@cpan.org>',
     license             => 'perl',

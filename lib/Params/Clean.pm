@@ -5,15 +5,7 @@
 
 =head1 NAME
 
-=over 1
-
-=item Params::Clean
-
-I<Parse A Routine Allowing Modest Syntax: Casually List Explicit Arg Names>
-
-Process @_ as positional/named/flag/list/typed arguments
-
-=back
+B<Params::Clean> I<(Parse A Routine Allowing Modest Syntax--Casually List Explicit Arg Names)>: Process @_ as positional/named/flag/list/typed arguments
 
 =cut
 
@@ -60,12 +52,17 @@ Instead of starting your sub with C<my ($x, $y, $z) = @_;>
   my ($either_end, $tint) = args [0, -1], [Colour, Color];
 
 
+=head1 VERSION
+
+Version 0.9.1 (August 2007)
+
 =for html
 <STYLE>BODY { font-family: Optima, "Lucida Sans", Tahoma, Verdana, "Bitstream Vera Sans"; } </STYLE>
 
 =cut
 
 	#...add a pinch of CSS because CPAN.org inexplicably uses Arial(!)  =P
+
 
 
 
@@ -76,17 +73,7 @@ Instead of starting your sub with C<my ($x, $y, $z) = @_;>
 	#===========================================================================
 
 	package Params::Clean;
-
-	die __PACKAGE__.": Cannot find version number!\n" unless <<EOP =~/^\s*Version\s+([\d\.]+)\s+/im;
-
-=head1 VERSION
-
-Version 0.9 (July 2007): Initial release
-
-=cut
-
-EOP
-	our $VERSION=$1;	# Pull v# out of POD so that we need only specify it in one place
+	use version; our $VERSION = qv"0.9.1";
 	
 	use 5.6.0;																			# Because we use "our", etc.
 	use strict; use warnings; no warnings qw(uninitialized);							# Be good little disciplinarians (but not too good)
@@ -1078,15 +1065,15 @@ C<Params::Clean> exports UIDs for its identifiers (C<NAME, POSN, FLAG, TYPE, RES
 
 =over 1
 
-=item WARNING: attempt to use REST before last parameter
+=item I<WARNING: attempt to use REST before last parameter>
 
 The C<REST> keyword was not the last item passed to C<args>.  The leftover values are always returned after everything else,
 so C<REST> should appear last to avoid confusion.
 
 
-=item WHOA: can't use other LISTs inside a LIST!  Ignoring starting I<[or> endingI<]> param key: $key
+=item I<WHOA: can't use other LISTs inside a LIST!  Ignoring starting >[orI< ending>]I< param key: $key>
 
-=item WHOA: can't use FLAGs or TYPEs inside a LIST!  Ignoring starting I<[or> endingI<]> param key: $key
+=item I<WHOA: can't use FLAGs or TYPEs inside a LIST!  Ignoring starting >[orI< ending>]I< param key: $key>
 
 A C<LIST> can take only named or positional parameters as the starting (or ending) point.  
 Something like C<< LIST [FLAG Foo] <=> [TYPE \&foo] >> will trigger a warning for either the starting or ending point (or both),
@@ -1094,12 +1081,12 @@ An invalid starting point means nothing will be returned for the list (C<undef>)
 an invalid ending point means that only the starting key will be returned; no other args will be collected.
 
 
-=item ERROR: couldn't find beginning of LIST starting with '$key'
+=item I<ERROR: couldn't find beginning of LIST starting with '$key'>
 
-=item ERROR: couldn't find ending of LIST from $start to $end
+=item I<ERROR: couldn't find ending of LIST from $start to $end>
 
 The starting or ending parameter specified for a LIST could not be found. 
-If the given parameter does appear somewhere in C<@_>, the message will also say, B<"(probably already used up by another param!)">
+If the given parameter does appear somewhere in C<@_>, the message will also say, I<"(probably already used up by another param!)">
 (meaning a previously-collected arg already marked that parameter as "used" 
 -- see L<"Using up arguments">).
 If the starting point cannot be found, then nothing (C<undef>) is returned for the list (surprisingly enough).
@@ -1107,19 +1094,19 @@ If the ending point cannot be found, then everything else (not already collected
 To deliberately allow a list to run off the end of C<@_>, make C<-1> (one of) the ending keys, or else do not specify an ending point at all.
 
 
-=item WARNING: attempt to use invalid TYPE
+=item I<WARNING: attempt to use invalid TYPE>
 
 C<TYPE> parameters must be the name of a class (a C<ref> value), or a code-ref that can check each arg.
 Trying to use anything else as a C<TYPE> (e.g. a plain number or string) will result in this error.
 
 
-=item WARNING: non-integral number $param will be interpreted as a named parameter
+=item I<WARNING: non-integral number $param will be interpreted as a named parameter>
 
 A number that's not an integer was found as a parameter key.  Since positional params must be integers,
 the value will be interpreted as a C<NAME>d parameter.  To avoid the error, explicitly mark the key using the C<NAME> keyword.
 
 
-=item WARNING: Orphaned TYPE
+=item I<WARNING: Orphaned TYPE>
 
 A C<TYPE> keyword was encountered without a following string or coderef, e.g., C<args 1,2, [TYPE];>.
 
