@@ -1,6 +1,6 @@
 ---
 name: Params-Clean
-version: 0.9.1
+version: 0.9.2
 author:
   - 'David Green <plato@cpan.org>'
 abstract: Clean and simple parsing of args by position/name/flag/list/type
@@ -16,7 +16,7 @@ build_requires:
 provides:
   Params::Clean:
     file: lib/Params/Clean.pm
-    version: 0.9.1
+    version: 0.9.2
 generated_by: Module::Build version 0.2808
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html

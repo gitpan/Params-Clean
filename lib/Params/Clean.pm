@@ -5,7 +5,7 @@
 
 =head1 NAME
 
-B<Params::Clean> I<(Parse A Routine Allowing Modest Syntax--Casually List Explicit Arg Names)>: Process @_ as positional/named/flag/list/typed arguments
+B<Params::Clean> (Parse A Routine Allowing Modest Syntax--Casually List Explicit Arg Names): Process @_ as positional/named/flag/list/typed arguments
 
 =cut
 
@@ -54,14 +54,9 @@ Instead of starting your sub with C<my ($x, $y, $z) = @_;>
 
 =head1 VERSION
 
-Version 0.9.1 (August 2007)
-
-=for html
-<STYLE>BODY { font-family: Optima, "Lucida Sans", Tahoma, Verdana, "Bitstream Vera Sans"; } </STYLE>
+Version 0.9.2 (August 2007)
 
 =cut
-
-	#...add a pinch of CSS because CPAN.org inexplicably uses Arial(!)  =P
 
 
 
@@ -73,7 +68,7 @@ Version 0.9.1 (August 2007)
 	#===========================================================================
 
 	package Params::Clean;
-	use version; our $VERSION = qv"0.9.1";
+	use version; our $VERSION = qv"0.9.2";
 	
 	use 5.6.0;																			# Because we use "our", etc.
 	use strict; use warnings; no warnings qw(uninitialized);							# Be good little disciplinarians (but not too good)
