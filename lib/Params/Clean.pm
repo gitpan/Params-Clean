@@ -54,7 +54,12 @@ Instead of starting your sub with C<my ($x, $y, $z) = @_;>
 
 =head1 VERSION
 
-Version 0.9.2 (August 2007)
+Version 0.9.3 (December 2007)
+
+This version introduces controllable warnings and the ability to rename exported keywords.
+
+B<NOTE:> v0.9.3 does not warn of missing starting points for LISTs unless asked to.  
+Previous versions always emitted such warnings.
 
 =cut
 
@@ -68,7 +73,7 @@ Version 0.9.2 (August 2007)
 	#===========================================================================
 
 	package Params::Clean;
-	use version; our $VERSION = qv"0.9.2";
+	use version; our $VERSION = qv"0.9.3";
 	
 	use 5.6.0;																			# Because we use "our", etc.
 	use strict; use warnings; no warnings qw(uninitialized);							# Be good little disciplinarians (but not too good)
@@ -76,26 +81,32 @@ Version 0.9.2 (August 2007)
 	use Devel::Caller::Perl 'called_args';		                                      	# for stealing our caller's @_
 	
 	
-	use base "Exporter";
-	our @EXPORT=qw/args POSN NAME FLAG REST TYPE LIST/;									# Symbols to be exported by default
-
+	our (@keywords, @KEYWORDS);					                                    	# We need to declare these and then init them with BEGIN so they're ready for the "use UID"
+	BEGIN { our @keywords=qw/POSN NAME FLAG REST TYPE/; }	                           	# UID keywords
+	BEGIN { our @KEYWORDS=(@keywords, "LIST", "args"); }		                       	# all keywords (LIST handled specially)
 	
+	use UID @keywords;			# Set up some lexicals that won't be available anywhere else, so exporting refs to them will act as unique identifiers
 	
+	our %Warn;																			# categories of warning levels by caller: e.g. $Warn{main}{missing_start}=fatal
+	BEGIN {
+		$Warn{undef}={			               	# default warning levels
+					invalid_opts=>"warn", 		# illegal warning or keyword options used
+					missing_start=>"ignore", 	# LIST cannot find specified starting key
+					missing_end=>"warn", 		# LIST cannot find specified ending key
+					misplaced_rest=>"warn", 	# REST used before last parameter
+					invalid_list=>"warn", 		# tried to use a FLAG or LIST, etc, as endpoint to a LIST
+					invalid_type=>"warn", 		# tried to use an illegal TYPE definition
+					nonint_name=>"warn",  		# non-integral key will be used as a name
+					orphaned_type=>"warn", 		# TYPE not followed by a definition
+					 };
+		}
+	# now create constants with all our exception-type names (handy, and helps catch typos!)	
+	BEGIN { no strict 'refs'; for my $s (keys %{$Warn{undef}}) {*{$s}=sub {return $s, @_ if wantarray; warnings::warn "ERROR: attempt to use args after '$s' which is in scalar context (perhaps you need a comma after '$s'?)" if @_; return $s};} }	# stolen from UID.pm
 	
-	#===========================================================================
-	#
-	# 	IDs & DECLARATIONS
-	#
-	#===========================================================================
-	
-	# Set up some lexicals that won't be available anywhere else,
-	#  so exporting refs to them will act as unique identifiers
-	
-	use UID qw/POSN NAME FLAG TYPE REST/;		# LIST handled specially
 	
 	our $CaseSensitive=0;																# By default, we match match names case-insensitively
 	our $Debug=0;																		# Whether to show debugging messages (0 level=none)
-	sub same($$);	sub insame($@);	sub typewriter($$);									# predeclare!
+	sub same($$);	sub insame($@);	sub typewriter($$); sub warning;					# predeclare!
 	sub un {grep !$_[$_], 0..@_-1;}														# pull out all the keys that work out to false (used with @used!)
 	sub array { map ref($_) eq "ARRAY"?@$_:$_, (@_) }									# Normalise a list by expanding array-refs
 	sub comma { "[".join(", ", array @_)."]" } 											# Format array(ref) into "[a, b, c]"
@@ -106,12 +117,53 @@ Version 0.9.2 (August 2007)
 	#	Pass each thing you want cleaned as a separate arg
 	{ 
 		return unless $Debug>=shift;													# do nothing unless our debugging level is high enough
-		my %ID=reverse(POSN=>POSN, FLAG=>FLAG, NAME=>NAME, TYPE=>TYPE, REST=>REST);		# lookup hash for our special IDs
-		warn join " ", map $ID{$_}?"|$ID{$_}|":ref($_)eq"ARRAY"?"[".(join " ", map $ID{$_}?"|$ID{$_}|":$_, (@$_))."]":"$_", (@_), "\n"
+		my $i; my %ID=reverse(POSN=>POSN, FLAG=>FLAG, NAME=>NAME, TYPE=>TYPE, REST=>REST);		# lookup hash for our special IDs
+		warn join " ", map $ID{$_}?"|$ID{$_}|":ref eq"ARRAY"?"[".(join " ", map $ID{$_}?"|$ID{$_}|":$_, (@$_))."]":ref eq "HASH"?"{".(join "", map {$i++%2?"$_; ":"$_=>"} %$_)."}":"$_", (@_), "\n"
 	}
 	
 	
 
+	#===========================================================================
+	#
+	# 	IDs & DECLARATIONS
+	#
+	#===========================================================================
+	
+	sub import
+	# Handle module options: renaming exported UIDs and setting desired warnings
+	#
+	# RENAMING: pass a keyword ID followed by the new name (LIST=>"PLIST") -- setting to undef means don't export it at all
+	# WARNINGS: warn=>"type", or die=>"type" or fatal=>"type", or ignore=>"type"
+	{
+		my $me=shift; 							# our package name
+		my @opts, my $i; push @opts, [$_[$i++]=>$_[$i++]] while $i<@_;	# pair up the options (we would use a hash, but we want to preserve order, and anyway we could have the same key repeated)
+		my %EXPORT=map {$_=>$_} @KEYWORDS;		# keywords to be exported (normally all @KEYWORDS) in convenient hash format
+		my $keys=join "|", @KEYWORDS;			# for regex to test for any of our keywords
+		my $caller=(caller)[0];					# caller's package
+		
+		
+		# Set up warning/fatal/ignoral categories
+		$Warn{$caller}={%{$Warn{undef}}};					      		# start by setting up default warning levels
+		for (grep $opts[$_][0]=~/^(warn|die|fatal|ignore)$/, 0..$#opts)	# grep through the key-halves of each opt for exception-levels
+		{
+			my $opt=delete $opts[$_];
+			warning(invalid_opts qq[WARNING: Ignoring attempt to set unrecogised warning category "$opt->[1]"]) and next unless exists $Warn{$caller}{$opt->[1]};	# complain if trying to set an invalid category
+			$Warn{$caller}{$opt->[1]}=$opt->[0];		# set level for this caller and remove opts as we handle them
+		}
+		
+		
+		# Look for our keywords: pairs that start with a keyword substitute the new name instead
+		$EXPORT{$opts[$_][0]}=$opts[$_][1] and delete $opts[$_] for grep $opts[$_][0]=~/^($keys)$/, grep exists $opts[$_], 0..$#opts; # look for our keywords and remove opts as we deal with them
+		no strict 'refs';		                                                        # so we can manually "export" the subs to the caller's namespace
+		*{$caller."::".$EXPORT{$_}}=\&{$_} for grep defined $EXPORT{$_}, keys %EXPORT;	# skipping undefs
+		
+		
+		# If there are any opts left, we don't know what to do with them
+		warning invalid_opts "WARNING: Ignoring unrecognised options [".join(", ", map "$opts[$_][0]=>$opts[$_][1]", grep exists $opts[$_], 0..$#opts)."]" if @opts;
+	}
+	
+	
+	
 	#===========================================================================
 	#
 	# 	LISTs
@@ -190,7 +242,7 @@ Version 0.9.2 (August 2007)
 	my $typesub;	
 		for my $param (@sig)
 		{
-			warnings::warn "WARNING: attempt to use REST before last parameter" and $rest++ if $rest==1;	# complain if REST flag is set and we're still looping (i.e. not done with the sig) [increment and check only when ==1 so the warning doesn't spam us every time through the loop!]
+			warning misplaced_rest "WARNING: attempt to use REST before last parameter" and $rest++ if $rest==1;	# complain if REST flag is set and we're still looping (i.e. not done with the sig) [increment and check only when ==1 so the warning doesn't spam us every time through the loop!]
 			
 			#Switch type whenever we hit one of our identifiers
 			
@@ -259,7 +311,7 @@ Version 0.9.2 (August 2007)
 						$err.=" (probably already used up by another param!)" if insame $param->{start}->[0], @_;	# more helpful message -- if starting keyword really is in the arg list, then we most likely can't find it because it already got used somewhere else
 					}
 					
-					warnings::warn $err; 
+					warning missing_start $err; 
 					
 					$results[$n++]=[];	push @number, undef; 								# add an empty result since we could find it properly
 					next;
@@ -330,7 +382,7 @@ Version 0.9.2 (August 2007)
 								$err.=" (probably already used up by another param!)" if insame $param->{end}->[0], @_;	# more helpful message -- if ending keyword really is in the arg list, then we most likely can't find it because it already got used somewhere else
 							}
 							
-							warnings::warn $err; 
+							warning missing_end $err; 
 							$end=$args-1 unless defined $end; 	#to grab all until end... or should we skip this because of the error: "next;" ??
 						}
 						elsif (!$param->{incl})
@@ -421,7 +473,7 @@ Version 0.9.2 (August 2007)
 							else															# not a type of TYPE that we recognise!
 							{
 								debug 2, "ERROR! Invalid TYPE!!!\t#$n\tKey[$i]:", $key, "\tType:", $kind, "\tArg[$a]:", $_[$a];
-								warnings::warn "WARNING: attempt to use invalid TYPE";
+								warning invalid_type "WARNING: attempt to use invalid TYPE";
 							}
 							
 							if ($match)
@@ -532,11 +584,33 @@ Version 0.9.2 (August 2007)
 		{
 			return POSN if $param==int($param);											# numeric and an int
 			###Maybe warn if some kind of ref? not an object?? Hm....
-			warnings::warnif "WARNING: non-integral number $param will be interpreted as a named parameter";
+			##perhaps use "$param"<0, etc., since a stringified int will still numify to an int...
+			warning nonint_name if "WARNING: non-integral number $param will be interpreted as a named parameter";
 		}
 		
 		# Not an int, so assume named
 		return NAME;
+	}
+	
+	
+	
+	#===========================================================================
+	#
+	# 	WARNINGS
+	#
+	#===========================================================================
+	
+	sub warning
+	# Display a warning message, or die, or do nothing, according to our error levels
+	{
+		my $category=shift;					# error category, as controlled by %Warn
+		my $caller=(caller 1)[0];			# to find out whose settings to use
+warn		$caller=(caller my $level++)[0] while $caller eq __PACKAGE__;
+		my $w=$Warn{$caller}{$category};
+		
+		return if $w eq "ignore";
+		warnings::warn "@_";
+		die "\t(Fatal exception category: $category)\n" if $w eq "die" or $w eq "fatal";
 	}
 	
 	
@@ -587,7 +661,7 @@ Version 0.9.2 (August 2007)
 			}
 		}
 		
-		warnings::warn "WARNING: Orphaned TYPE" if $typesub; 	                       	# we found a TYPE but no type-sub was following it!
+		warning orphaned_type "WARNING: Orphaned TYPE" if $typesub; 	         		# we found a TYPE but no type-sub was following it!
 		
 		return \@keys, \@types;
 	}	
@@ -1016,6 +1090,29 @@ Again, once C<Pipe> is found, it does not matter whether the values identified b
 even if that means the list consists of nothing but the starting point.)
 
 
+=head1 Care and C<Usage> of your module
+
+You can simply C<use Params::Clean>, or you can supply some extra options to control warnings and exported names.
+The options are a series of keys and values (so they must be correctly paired).
+
+To change the name under which a keyword will be exported into your namespace, give its default name followed by
+the name you wish to use for it in your calling module, e.g. if you already have a C<LIST> function, you can rename
+C<Params::Clean>'s C<LIST> by including an option like C<< LIST=>PLIST >>.
+
+You can also control how C<Params::Clean> will handle various kinds of errors.  Most exceptions simply emit a warning
+message and try to continue.  You can set the level for recognised categories to "warn" to display a message; 
+to "die" or "fatal" to display the message and die; or to "ignore" to do nothing.
+Give the level of error-handling followed by the category name, e.g. C<< die=>missing_start >>.
+See L<Diagnostics|"DIAGNOSTICS"> for the names of each category, and the default level.
+
+Example:
+
+	use Params::Clean  LIST=>"PLIST", NAME=>"Key",  fatal=>"misplaced_rest";
+
+C<Params::Clean> will issue a warning for any unrecognised options that it encounters.  (You can C<< ignore=>invalid_opts >>,
+but of course that will affect only subsequent options, not any that came before it.)
+
+
 
 =head1 UIDs
 
@@ -1052,15 +1149,33 @@ The same considerations apply as for exporting any other subroutine
 -- allow the user control over what gets exported to avoid conflicts from different modules trying to export UIDs of the same name.
 
 C<Params::Clean> exports UIDs for its identifiers (C<NAME, POSN, FLAG, TYPE, REST, LIST>) so that you can use them with the C<args> function in your subroutines.
+(They can be renamed for importing into your namespace: see L<"Care and Usage of your module">).
 
 
 
 
 =head1 DIAGNOSTICS
 
+The list below includes the category of each exception, so that you can control how C<Params::Clean> handles that type
+of exception, e.g. C<< warn=>foo >> means that any "foo" errors will issue a warning by default.
+(See L<"Care and Usage of your module">).
+
+
 =over 1
 
+=item I<WARNING: Ignoring attempt to set unrecogised warning category>
+
+=item I<WARNING: Ignoring unrecognised options>
+
+B<C<< warn=>invalid_opts >>>
+
+An option (pair) given in the C<use> statement is invalid, misspelled, or otherwise not recognised by C<Params::Clean>.
+The unknown option will be skipped over.
+
+
 =item I<WARNING: attempt to use REST before last parameter>
+
+B<C<< warn=>misplaced_rest >>>
 
 The C<REST> keyword was not the last item passed to C<args>.  The leftover values are always returned after everything else,
 so C<REST> should appear last to avoid confusion.
@@ -1070,8 +1185,10 @@ so C<REST> should appear last to avoid confusion.
 
 =item I<WHOA: can't use FLAGs or TYPEs inside a LIST!  Ignoring starting >[orI< ending>]I< param key: $key>
 
+B<C<< warn=>invalid_list >>>
+
 A C<LIST> can take only named or positional parameters as the starting (or ending) point.  
-Something like C<< LIST [FLAG Foo] <=> [TYPE \&foo] >> will trigger a warning for either the starting or ending point (or both),
+Something like C<< LIST [FLAG Foo] <=> [TYPE \&foo] >> will trigger a warning for either the starting or ending point (or both).
 An invalid starting point means nothing will be returned for the list (C<undef>); 
 an invalid ending point means that only the starting key will be returned; no other args will be collected.
 
@@ -1080,10 +1197,13 @@ an invalid ending point means that only the starting key will be returned; no ot
 
 =item I<ERROR: couldn't find ending of LIST from $start to $end>
 
+B<C<< ignore=>missing_start >>>
+
+B<C<< warn=>missing_end >>>
+
 The starting or ending parameter specified for a LIST could not be found. 
 If the given parameter does appear somewhere in C<@_>, the message will also say, I<"(probably already used up by another param!)">
-(meaning a previously-collected arg already marked that parameter as "used" 
--- see L<"Using up arguments">).
+(meaning a previously-collected arg already marked that parameter as "used" -- see L<"Using up arguments">).
 If the starting point cannot be found, then nothing (C<undef>) is returned for the list (surprisingly enough).
 If the ending point cannot be found, then everything else (not already collected) until the end of C<@_> will be grabbed by the list.
 To deliberately allow a list to run off the end of C<@_>, make C<-1> (one of) the ending keys, or else do not specify an ending point at all.
@@ -1091,17 +1211,23 @@ To deliberately allow a list to run off the end of C<@_>, make C<-1> (one of) th
 
 =item I<WARNING: attempt to use invalid TYPE>
 
+B<C<< warn=>invalid_type >>>
+
 C<TYPE> parameters must be the name of a class (a C<ref> value), or a code-ref that can check each arg.
 Trying to use anything else as a C<TYPE> (e.g. a plain number or string) will result in this error.
 
 
 =item I<WARNING: non-integral number $param will be interpreted as a named parameter>
 
+B<C<< warn=>nonint_name >>>
+
 A number that's not an integer was found as a parameter key.  Since positional params must be integers,
 the value will be interpreted as a C<NAME>d parameter.  To avoid the error, explicitly mark the key using the C<NAME> keyword.
 
 
 =item I<WARNING: Orphaned TYPE>
+
+B<C<< warn=>orphaned_type >>>
 
 A C<TYPE> keyword was encountered without a following string or coderef, e.g., C<args 1,2, [TYPE];>.
 
@@ -1155,7 +1281,7 @@ even if it does add slightly to the clutter.  Judicious use of C<< => >> to quot
 C<LIST>s cannot identify starting (or ending) points by C<TYPE>.  They probably should be able to.
 
 
-Additional or more helpful diagnostics would be nice, and users should have more control over them.
+Additional or more helpful diagnostics would be nice.
 
 To paraphrase L<Damian Conway|Getopt::Declare>: 
 It shouldn't take hundreds and hundreds of lines to explain a package that was designed for intuitive ease of use!
