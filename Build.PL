@@ -7,7 +7,7 @@ my $builder = Module::Build->new(
     dist_abstract       => 'Clean and simple parsing of args by position/name/flag/list/type',
     dist_author         => 'David Green <plato@cpan.org>',
     license             => 'perl',
-    requires            =>{'UID'=>0, 'Devel::Caller::Perl'=>0, perl=>'5.6.0'},
+    requires            =>{'UID'=>0, 'Devel::Caller::Perl'=>0, version=>0, perl=>'5.6.0'},
     
     build_requires      =>{'Test::More' => 0, },
     add_to_cleanup      =>['Params-Clean-*'],

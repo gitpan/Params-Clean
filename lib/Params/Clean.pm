@@ -54,12 +54,9 @@ Instead of starting your sub with C<my ($x, $y, $z) = @_;>
 
 =head1 VERSION
 
-Version 0.9.3 (December 2007)
+Version 0.9.4 (December 2007)
 
-This version introduces controllable warnings and the ability to rename exported keywords.
-
-B<NOTE:> v0.9.3 does not warn of missing starting points for LISTs unless asked to.  
-Previous versions always emitted such warnings.
+This version introduces the PARSE keyword.
 
 =cut
 
@@ -73,16 +70,15 @@ Previous versions always emitted such warnings.
 	#===========================================================================
 
 	package Params::Clean;
-	use version; our $VERSION = qv"0.9.3";
+	use version; our $VERSION = qv"0.9.4";
 	
 	use 5.6.0;																			# Because we use "our", etc.
 	use strict; use warnings; no warnings qw(uninitialized);							# Be good little disciplinarians (but not too good)
-	use warnings::register;																# Handle our own warnings
 	use Devel::Caller::Perl 'called_args';		                                      	# for stealing our caller's @_
 	
 	
 	our (@keywords, @KEYWORDS);					                                    	# We need to declare these and then init them with BEGIN so they're ready for the "use UID"
-	BEGIN { our @keywords=qw/POSN NAME FLAG REST TYPE/; }	                           	# UID keywords
+	BEGIN { our @keywords=qw/POSN NAME FLAG REST TYPE PARSE/; }	                       	# UID keywords
 	BEGIN { our @KEYWORDS=(@keywords, "LIST", "args"); }		                       	# all keywords (LIST handled specially)
 	
 	use UID @keywords;			# Set up some lexicals that won't be available anywhere else, so exporting refs to them will act as unique identifiers
@@ -91,17 +87,19 @@ Previous versions always emitted such warnings.
 	BEGIN {
 		$Warn{undef}={			               	# default warning levels
 					invalid_opts=>"warn", 		# illegal warning or keyword options used
+					funny_arglist=>"ignore",	# asked to PARSE something that's not an ARRAY, HASH, or CODE
 					missing_start=>"ignore", 	# LIST cannot find specified starting key
 					missing_end=>"warn", 		# LIST cannot find specified ending key
-					misplaced_rest=>"warn", 	# REST used before last parameter
 					invalid_list=>"warn", 		# tried to use a FLAG or LIST, etc, as endpoint to a LIST
 					invalid_type=>"warn", 		# tried to use an illegal TYPE definition
 					nonint_name=>"warn",  		# non-integral key will be used as a name
 					orphaned_type=>"warn", 		# TYPE not followed by a definition
+					misplaced_rest=>"warn", 	# REST used before last parameter
+					misplaced_parse=>"die", 	# PARSE used after first parameter
 					 };
 		}
 	# now create constants with all our exception-type names (handy, and helps catch typos!)	
-	BEGIN { no strict 'refs'; for my $s (keys %{$Warn{undef}}) {*{$s}=sub {return $s, @_ if wantarray; warnings::warn "ERROR: attempt to use args after '$s' which is in scalar context (perhaps you need a comma after '$s'?)" if @_; return $s};} }	# stolen from UID.pm
+	BEGIN { no strict 'refs'; for my $s (keys %{$Warn{undef}}) {*{$s}=sub {return $s, @_ if wantarray; warn "ERROR: attempt to use args after '$s' which is in scalar context (perhaps you need a comma after '$s'?)" if @_; return $s};} }	# stolen from UID.pm
 	
 	
 	our $CaseSensitive=0;																# By default, we match match names case-insensitively
@@ -125,7 +123,7 @@ Previous versions always emitted such warnings.
 
 	#===========================================================================
 	#
-	# 	IDs & DECLARATIONS
+	# 	STARTUP
 	#
 	#===========================================================================
 	
@@ -212,7 +210,12 @@ Previous versions always emitted such warnings.
 		#------------------------------------------------------
 		
 		my @sig=@_;															# The signature specifying how to parse the caller's args
-		@_=called_args(0);													# Get the @_ args passed in to the original sub (=our caller)
+		
+		# Get args to be parsed
+		if (same $sig[0], PARSE)		    		                    	# then specially passed in the list to parse
+		{	shift @sig; @_=preparse(shift @sig);	}  			         	# drop first arg(=PARAM) and grab the second(=arrayref)
+		else 		                        		                    	# we use [the caller's] @_ by default
+		{	@_=called_args(0);	}											# get the @_ args passed in to the original sub (=our caller)
 		
 		my $n;																# Counter for which parameter we're processing
 		my $type;															# holder for the ID of the arg-type currently being processed
@@ -242,11 +245,18 @@ Previous versions always emitted such warnings.
 	my $typesub;	
 		for my $param (@sig)
 		{
-			warning misplaced_rest "WARNING: attempt to use REST before last parameter" and $rest++ if $rest==1;	# complain if REST flag is set and we're still looping (i.e. not done with the sig) [increment and check only when ==1 so the warning doesn't spam us every time through the loop!]
+			warning misplaced_rest "WARNING: attempt to use REST before last parameter" and $rest++ if $rest==1;		# complain if REST flag is set and we're still looping (i.e. not done with the sig) [increment and check only when ==1 so the warning doesn't spam us every time through the loop!]
+			
+			warning misplaced_parse "ERROR: encountered PARSE after beginning of parameter list" if same $param, PARSE;	# complain if PARSE wasn't the first parameter (would've been dealt with above)
 			
 			#Switch type whenever we hit one of our identifiers
 			
-			if ($typesub)																	# previous item was a TYPE type, so look for the sub
+			if ($type==PARSE)																# We found a PARSE keyword last pass through (which was an error, of course)
+			{
+				warning misplaced_parse "\tIgnoring misplaced PARSE values"; 				# but too late to do anything with them
+				undef $type;																# reset for next arg
+			}
+			elsif ($typesub)																# previous item was a TYPE type, so look for the sub
 			{
 				$param=[TYPE, $param];														# put our TYPE=>sub into an array-ref so we can deal with it as a single unit below
 				$typesub=0;
@@ -257,7 +267,7 @@ Previous versions always emitted such warnings.
 			{
 				$typesub=1;																	# set flag so next pass we can grab the type-sub
 			}
-			elsif (insame $param => POSN, NAME, FLAG)										# we've hit one of our types
+			elsif (insame $param => POSN, NAME, FLAG, PARSE)								# we've hit one of our types
 			{
 				$type=$param;  																# Switch current type-holder to that type
 				debug 2, "\t", $type, "type";
@@ -604,13 +614,43 @@ Previous versions always emitted such warnings.
 	# Display a warning message, or die, or do nothing, according to our error levels
 	{
 		my $category=shift;					# error category, as controlled by %Warn
-		my $caller=(caller 1)[0];			# to find out whose settings to use
-warn		$caller=(caller my $level++)[0] while $caller eq __PACKAGE__;
-		my $w=$Warn{$caller}{$category};
+		my $level=1;						# start one level up (our caller)
+		my @caller=(caller $level);	    	# to find out whose settings to use; 
+		@caller=(caller ++$level) while $caller[0] eq __PACKAGE__;		# keep moving a level up until we go beyond our own package
+		
+		my $w=$Warn{$caller[0]}{$category};
 		
 		return if $w eq "ignore";
-		warnings::warn "@_";
+		warn "@_ at $caller[1] line $caller[4]\n";
 		die "\t(Fatal exception category: $category)\n" if $w eq "die" or $w eq "fatal";
+	}
+	
+	
+	
+	#===========================================================================
+	#
+	# 	PREPARSE LIST of ARGS
+	#
+	#===========================================================================
+	
+	sub preparse	
+	# Get the list of args to be parsed, passed in via a PARSE keyword
+	{	
+		my $args=shift;							# we pass in a single value
+		my $ref=ref $args || "value";
+		
+		# normally, the list should be passed in as an array-ref
+		return @$args if $ref eq "ARRAY";
+		
+		# but might be a hashref, we just expand as a list
+		return %$args if $ref eq "HASH";
+		
+		# of it we've got a coderef, call it and return the results
+		return &$args if $ref eq "CODE";
+		
+		# anything else, just assume it's the only arg and return it!
+		warning funny_arglist "WARNING: suspicious arg-list given to PARSE (a single unrecognised $ref)";	
+		return $args;
 	}
 	
 	
@@ -763,6 +803,18 @@ Trying to mix named and positional params in the middle of your args, though, is
 (But many of the examples here do that for the sake of demonstrating how things work!)
 
 =back
+
+
+
+=head2 Specifying the argument list
+
+By default, C<args> parses C<@_> to get the list of arguments.  You can override this with the C<PARSE> keyword, 
+which takes a single value to be used for the args list.  For example, C<args PARSE \@_, ...> would explicitly get its arguments from C<@_>.
+You can use any array-ref, or a hash-ref which will be flattened and treated as a plain list, or a code-ref which will be called and
+the results used as the argument list.  
+Anything else will be used as a (single) argument value.
+
+The C<PARSE> keyword and its value must come immediately after C<args>; putting other parameters before it will raise an error.
 
 
 
@@ -1090,7 +1142,7 @@ Again, once C<Pipe> is found, it does not matter whether the values identified b
 even if that means the list consists of nothing but the starting point.)
 
 
-=head1 Care and C<Usage> of your module
+=head2 Care and C<Usage> of your module
 
 You can simply C<use Params::Clean>, or you can supply some extra options to control warnings and exported names.
 The options are a series of keys and values (so they must be correctly paired).
@@ -1171,6 +1223,24 @@ B<C<< warn=>invalid_opts >>>
 
 An option (pair) given in the C<use> statement is invalid, misspelled, or otherwise not recognised by C<Params::Clean>.
 The unknown option will be skipped over.
+
+
+=item I<ERROR: encountered PARSE after beginning of parameter list>
+
+B<C<< fatal=>misplaced_parse >>>
+
+When explcitly giving a list of arguments to parse, the C<PARSE> keyword must be the first thing passed to C<args>.
+By default, C<Params::Clean> will die when it finds a C<PARSE> command out of place; 
+if you set it to C<ignore> or C<warn>, the value passed in via C<PARSE> will be ignored
+(and if you have set C<< warn=>misplaced_parse >>, you will get a "B<Ignoring misplaced PARSE values>" message).
+
+
+=item I<WARNING: suspicious arg-list given to PARSE (a single unrecognised value)>
+
+B<C<< ignore=>funny_arglist >>>
+
+The value you pass in for an argument list using C<PARSE> should be an arrayref, or a hashref, or a coderef.
+Anything else will trigger this warning, if you turn it on.
 
 
 =item I<WARNING: attempt to use REST before last parameter>
@@ -1283,6 +1353,12 @@ C<LIST>s cannot identify starting (or ending) points by C<TYPE>.  They probably 
 
 Additional or more helpful diagnostics would be nice.
 
+
+Sometimes, trying to read C<@_> automatically seems not to work.  If this happens, the simple workaround is to explicitly
+specify C<PARSE \@_> as the first thing passed to C<args>.  
+(And if you know what makes Devel::Caller::Perl's C<called_args> function sometimes unable to read C<@_>, please let me know!)
+
+
 To paraphrase L<Damian Conway|Getopt::Declare>: 
 It shouldn't take hundreds and hundreds of lines to explain a package that was designed for intuitive ease of use!
 
@@ -1298,7 +1374,7 @@ This module requires L<UID.pm|UID> and L<Devel::Caller::Perl>.
 
 =head1 METADATA
 
-Copyright 2007 David Green, C<< <plato at cpan.org> >>.  
+Copyright 2007-2008 David Green, C<< <plato at cpan.org> >>.  
 
 This module is free software; you may redistribute it or modify it under the same terms as Perl itself. See L<perlartistic>. 
 
